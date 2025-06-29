@@ -5,7 +5,7 @@ A comprehensive end-to-end data engineering project using Apache Cassandra, Goog
 ## Project Structure
 ```
 NoSQL-Datawarehouse-Project/
-├── docker/                    # Docker configurations
+├── docker/                   # Docker configurations
 │   ├── airflow/              # Airflow setup
 │   ├── kafka/                # Kafka configuration
 │   ├── cassandra/            # Cassandra setup
