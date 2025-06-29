@@ -3,6 +3,7 @@ A comprehensive end-to-end data engineering project using Apache Cassandra, Goog
 
 
 ## Project Structure
+'''
 NoSQL-Datawarehouse-Project/
 ├── config/                   # Configuration files
 ├── docs/                     # Project documentation
@@ -22,3 +23,4 @@ NoSQL-Datawarehouse-Project/
 │   ├── kafka_producers/      # Kafka producers
 │   ├── spark_jobs/           # Spark processing jobs
 │   └── utils/                # Utility functions
+'''
