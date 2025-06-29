@@ -1,7 +1,293 @@
-version:'3.8'
+version: '3.8'
 
 services:
+  # ===========================================
+  # ZOOKEEPER - Kafka Coordination Service
+  # ===========================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - data-pipeline
 
+  # ===========================================
+  # KAFKA BROKER - Message Streaming Platform
+  # ===========================================
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    hostname: kafka
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9101:9101"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - data-pipeline
+
+  # ===========================================
+  # KAFKA CONTROL CENTER - Kafka Management UI
+  # ===========================================
+  control-center:
+    image: confluentinc/cp-enterprise-control-center:7.4.0
+    hostname: control-center
+    container_name: control-center
+    depends_on:
+      - kafka
+    ports:
+      - "9021:9021"
+    environment:
+      CONTROL_CENTER_BOOTSTRAP_SERVERS: 'kafka:29092'
+      CONTROL_CENTER_REPLICATION_FACTOR: 1
+      CONTROL_CENTER_INTERNAL_TOPICS_PARTITIONS: 1
+      CONTROL_CENTER_MONITORING_INTERCEPTOR_TOPIC_PARTITIONS: 1
+      PORT: 9021
+    volumes:
+      - control-center-data:/var/lib/confluent-control-center
+    networks:
+      - data-pipeline
+
+  # ===========================================
+  # CASSANDRA - NoSQL Database
+  # ===========================================
+  cassandra:
+    image: cassandra:4.1
+    hostname: cassandra
+    container_name: cassandra
+    ports:
+      - "9042:9042"
+      - "7000:7000"
+    environment:
+      - CASSANDRA_CLUSTER_NAME=DataWarehouse
+      - CASSANDRA_DC=datacenter1
+      - CASSANDRA_RACK=rack1
+      - CASSANDRA_ENDPOINT_SNITCH=GossipingPropertyFileSnitch
+      - CASSANDRA_NUM_TOKENS=128
+    volumes:
+      - cassandra-data:/var/lib/cassandra
+      - ./docker/cassandra/init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - data-pipeline
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================
+  # SPARK MASTER - Distributed Computing
+  # ===========================================
+  spark-master:
+    image: bitnami/spark:3.4
+    hostname: spark-master
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - "8080:8080"
+      - "7077:7077"
+      - "4040:4040"
+    volumes:
+      - ./src/spark_jobs:/opt/spark-apps
+      - ./config:/opt/spark-conf
+    networks:
+      - data-pipeline
+
+  # ===========================================
+  # SPARK WORKER - Processing Node
+  # ===========================================
+  spark-worker:
+    image: bitnami/spark:3.4
+    hostname: spark-worker
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    volumes:
+      - ./src/spark_jobs:/opt/spark-apps
+      - ./config:/opt/spark-conf
+    networks:
+      - data-pipeline
+
+  # ===========================================
+  # POSTGRES - Airflow Metadata Database
+  # ===========================================
+  postgres:
+    image: postgres:14
+    hostname: postgres
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    networks:
+      - data-pipeline
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  # ===========================================
+  # REDIS - Airflow Message Broker
+  # ===========================================
+  redis:
+    image: redis:latest
+    hostname: redis
+    container_name: airflow-redis
+    expose:
+      - 6379
+    networks:
+      - data-pipeline
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 30s
+      retries: 50
+
+  # ===========================================
+  # AIRFLOW WEBSERVER - Workflow Management UI
+  # ===========================================
+  airflow-webserver:
+    build: ./docker/airflow
+    hostname: airflow-webserver
+    container_name: airflow-webserver
+    depends_on:
+      - postgres
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=X3-OQDtGD8Rnfhuc8zXItRMKkqSyX8q32Lx5EGrH6nk=
+      - AIRFLOW__WEBSERVER__SECRET_KEY=495797189d47e47937d05c74d691c4daeafbc0e3d53aeeb2b2b0952a0c9e
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+      - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=true
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./config:/opt/airflow/config
+    ports:
+      - "8081:8080"
+    command: webserver
+    networks:
+      - data-pipeline
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  # ===========================================
+  # AIRFLOW SCHEDULER - Task Scheduling
+  # ===========================================
+  airflow-scheduler:
+    build: ./docker/airflow
+    hostname: airflow-scheduler
+    container_name: airflow-scheduler
+    depends_on:
+      - postgres
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=X3-OQDtGD8Rnfhuc8zXItRMKkqSyX8q32Lx5EGrH6nk=
+      - AIRFLOW__WEBSERVER__SECRET_KEY=495797189d47e47937d05c74d691c4daeafbc0e3d53aeeb2b2b0952a0c9e
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./config:/opt/airflow/config
+    command: scheduler
+    networks:
+      - data-pipeline
+
+
+
+  # ===========================================
+  # SUPERSET - Business Intelligence Platform
+  # ===========================================
+  superset:
+    image: apache/superset:latest
+    hostname: superset
+    container_name: superset
+    environment:
+      - SUPERSET_CONFIG_PATH=/app/superset_config.py
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./docker/superset/superset_config.py:/app/superset_config.py
+      - superset-data:/app/superset_home
+    networks:
+      - data-pipeline
+    command: >
+      bash -c "
+        superset fab create-admin --username admin --firstname Admin --lastname User --email admin@superset.com --password admin &&
+        superset db upgrade &&
+        superset init &&
+        superset run -h 0.0.0.0 -p 8088
+      "
+
+# ===========================================
+# PERSISTENT VOLUMES
+# ===========================================
 volumes:
+  zookeeper-data:
+    driver: local
+  zookeeper-logs:
+    driver: local
+  kafka-data:
+    driver: local
+  control-center-data:
+    driver: local
+  cassandra-data:
+    driver: local
+  postgres-db-volume:
+    driver: local
+  superset-data:
+    driver: local
 
+# ===========================================
+# NETWORK CONFIGURATION
+# ===========================================
 networks:
+  data-pipeline:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 
