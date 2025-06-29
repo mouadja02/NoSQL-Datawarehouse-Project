@@ -3,11 +3,9 @@ A comprehensive end-to-end data engineering project using Apache Cassandra, Goog
 
 
 ## Project Structure
-'''
+```
 NoSQL-Datawarehouse-Project/
-├── config/                   # Configuration files
-├── docs/                     # Project documentation
-├── docker/                   # Docker configurations
+├── docker/                    # Docker configurations
 │   ├── airflow/              # Airflow setup
 │   ├── kafka/                # Kafka configuration
 │   ├── cassandra/            # Cassandra setup
@@ -19,8 +17,6 @@ NoSQL-Datawarehouse-Project/
 │   └── docs/                 # Documentation
 ├── scripts/                  # Utility scripts
 ├── src/                      # Source code
-│   ├── data_generation/      # Faker data generators
-│   ├── kafka_producers/      # Kafka producers
-│   ├── spark_jobs/           # Spark processing jobs
-│   └── utils/                # Utility functions
-'''
+├── config/                   # Configuration files
+└── docs/                     # Project documentation
+```
